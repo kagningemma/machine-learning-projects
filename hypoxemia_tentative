@@ -1,0 +1,319 @@
+---
+title: "prediction_hypoxemia2"
+author: "Emmanuel Kagning Tsinda"
+date: "April 5, 2019"
+output: html_document
+---
+
+## 1- Logistic regression Using scaled Dataset
+
+```{r}
+setwd("~/MyRdirectory/SPO2 ML based prediction/from clydess")
+
+# Importing the dataset
+dataset = read.csv("hypoxemia_20190120.csv")
+colnames(dataset)
+dataset <- dataset[,-c(1, 50)]
+head(table(dataset$hypoxemia_90)) # 299 and 4103
+caret::featurePlot(dataset[, -49], dataset[, 49], plot = "box") # to see the distribution of features: the data has really been scaled
+
+# Splitting the dataset into the Training set and Test set
+# install.packages('caTools')
+library(caTools)
+set.seed(123)
+split = sample.split(dataset$hypoxemia_90, SplitRatio = 0.70)
+training_set = subset(dataset, split == TRUE)
+test_set = subset(dataset, split == FALSE)
+# we need to do feature scaling of our predictor variables, iindex 1 and 2
+# Feature Scaling
+#training_set[, 1:2] = scale(training_set[, 1:2])
+#test_set[, 1:2] = scale(test_set[, 1:2])
+
+# let us use glm function to create a classifier model that predicts Y
+# Fitting Logistic Regression to the Training set
+classifier = glm(formula = hypoxemia_90 ~ .,
+                 family = binomial,
+                 data = training_set)
+
+# Predicting the Test set results
+prob_pred = predict(classifier, type = 'response', newdata = test_set[-49])
+ 
+y_pred = ifelse(prob_pred > 0.5, "hypoxemia", "nonhypoxemia") # to display the predictions results as 1 or 0 (instead of probabilities)
+head(y_pred)# displays the probabilities that a child has hypoxemia or no
+
+# Making the Confusion Matrix
+cm = table(test_set[, 49], y_pred)
+cm
+caret::confusionMatrix(test_set[, 49], as.ordered(y_pred), positive="hypoxemia")
+ModelMetrics::auc(test_set[, 49], as.ordered(y_pred)) # Area under the curve: 0.47
+library(pROC) # to plot roc
+auc <- roc(test_set[, 49], as.ordered(y_pred))
+print(auc$auc)  # AUC=0.47
+
+# our classifier wrongly predicted 17 "Y" values
+# Visualising the Training set results
+# we will make a plot that will display what is happening in our model
+# run the whole code below: it show a plot/ the red points represent the individuals who did not buy; green point= individuals who really bough
+# There are 2 sections of the plot obtained using the classifier
+#   the red-shaded part--> indicates the predicted area where all individuals who did not buy should be located
+# the green --> area of predicted individuals who bought 
+# the prediction boundary(is a straight line) coz we built a linear classifer,
+# If we build a non linear classifier, then it will have a better performance in differeniating (because it will use a curve not a line)
+
+```
+
+AUC obtained from the logistic regression model is even worse than random guessing
+the accuracy is too low. let's try to improve this model by doing training the logistic regression model on a upsampled and undersampled trainingset
+
+```{r, echo=FALSE}
+library(ROSE)
+set.seed(1234)
+over <- ovun.sample(hypoxemia_90~., data=training_set, method="over") # randomly generate data so that the minority class will become equal to the majority class
+under <- ovun.sample(hypoxemia_90~., data=training_set, method="under")
+
+table(training_set$hypoxemia_90)
+table(over$data$hypoxemia_90)
+table(under$data$hypoxemia_90)
+```
+
+
+```{r, echo=FALSE}
+classifier = glm(formula = hypoxemia_90 ~ .,
+                 family = binomial,
+                 data = over$data)
+
+# Predicting the Test set results
+prob_pred = predict(classifier, type = 'response', newdata = test_set[-49])
+prob_pred # displays the probabilities that a child has hypoxemia or no
+y_pred = ifelse(prob_pred > 0.5, "hypoxemia", "nonhypoxemia") # to display the predictions results as 1 or 0 (instead of probabilities)
+head(y_pred)
+
+# Making the Confusion Matrix
+cm = table(test_set[, 49], y_pred)
+cm
+caret::confusionMatrix(test_set[, 49], as.ordered(y_pred), positive="hypoxemia")
+ModelMetrics::auc(test_set[, 49], as.ordered(y_pred)) # Area under the curve: 0.47
+
+auc <- roc(test_set[, 49], as.ordered(y_pred))
+print(auc$auc)  # AUC=0.74
+
+```
+
+This model has improved, but sensitivity is still low. 
+let's see the ROC curve of the improved model
+```{r}
+library(pROC) # to plot roc
+auc <- roc(test_set[, 49], as.ordered(y_pred))
+print(auc$auc)
+pROC::plot.roc(auc)
+```
+
+Now, if we use the undersampled training set to train the model, we get
+
+```{r}
+classifier = glm(formula = hypoxemia_90 ~ .,
+                 family = binomial,
+                 data = under$data)
+
+# Predicting the Test set results
+prob_pred = predict(classifier, type = 'response', newdata = test_set[-49])
+prob_pred # displays the probabilities that a child has hypoxemia or no
+y_pred = ifelse(prob_pred > 0.5, "hypoxemia", "nonhypoxemia") # to display the predictions results as 1 or 0 (instead of probabilities)
+head(y_pred)
+# Making the Confusion Matrix
+cm = table(test_set[, 49], y_pred)
+cm
+caret::confusionMatrix(test_set[, 49], as.ordered(y_pred), positive="hypoxemia")
+ModelMetrics::auc(test_set[, 49], as.ordered(y_pred)) # Area under the curve: 0.47
+ # 
+```
+
+This model has improved, but sensitivity is still low. 
+let's see the ROC curve of the improved model
+```{r}
+auc <- roc(test_set[, 49], as.ordered(y_pred))
+print(auc$auc) 
+pROC::plot.roc(auc)
+```
+
+
+##Using K-nearest Neighbours algorithm 
+
+```{r}
+# Fitting K-NN to the Training set and Predicting the Test set results (i the same function)
+library(class) # loading the package for KNN
+y_pred = knn(train = training_set[, -49],
+             test = test_set[, -49],
+             cl = training_set[, 49],
+             k = 5,
+             prob = TRUE)
+head(y_pred) # Predicting the Test set results
+
+# Making the Confusion Matrix
+cm = table(test_set[, 49], y_pred)
+cm
+caret::confusionMatrix(test_set[, 49], as.ordered(y_pred), positive="hypoxemia")
+ModelMetrics::auc(test_set[, 49], as.ordered(y_pred)) # Area under the curve: 0.47
+
+library(pROC) # to plot roc
+auc <- roc(test_set[, 49], as.ordered(y_pred))
+print(auc$auc) 
+# KNN CLASSIFIER IS A NON LINEAR CLASSIFICATION, THUS BETTER PERFORMANCE and logistic reg model
+```
+
+The sensitivity, and AUC are low (0.5396). let us try to improve it
+
+```{r}
+# tRYING A DIFFERENT K
+set.seed(1234)
+y_pred = knn(train = training_set[, -49],
+             test = test_set[, -49],
+             cl = training_set[, 49],
+             k = 6,
+             prob = TRUE)
+head(y_pred) # Predicting the Test set results
+
+# Making the Confusion Matrix
+cm = table(test_set[, 49], y_pred)
+cm
+caret::confusionMatrix(test_set[, 49], as.ordered(y_pred), positive="hypoxemia")
+ModelMetrics::auc(test_set[, 49], as.ordered(y_pred)) 
+```
+
+
+```{r}
+# oversampling ------------------------------------------------------------
+library(ROSE)
+set.seed(1234)
+over <- ovun.sample(hypoxemia_90~., data=training_set, method="over") # so that the minority class will be 50% of majority class
+```
+
+```{r}
+set.seed(1234)
+y_pred = knn(train = over$data[,-49],
+             test = test_set[, -49],
+             cl = over$data[, 49],
+             k = 4,
+             prob = TRUE)
+# Predicting the Test set results
+
+# Making the Confusion Matrix
+cm = table(test_set[, 49], y_pred)
+cm
+caret::confusionMatrix(test_set[, 49], as.ordered(y_pred), positive="hypoxemia")
+ModelMetrics::auc(test_set[, 49], as.ordered(y_pred)) # Area under the curve
+```
+It is even worse. 
+
+##ket us try naive bayes, another non linear classification algorithm
+
+
+```{r}
+# Fitting Naive Bayes to the training set
+# install.packages('e1071')
+library(e1071)
+classifier = naiveBayes(x = training_set[-49],
+                        y = training_set$hypoxemia_90)
+
+# Predicting the Test set results
+y_pred = predict(classifier, newdata = test_set[-49])
+head(y_pred)
+# Making the Confusion Matrix
+cm = table(test_set[,49], as.ordered(y_pred))
+cm
+caret::confusionMatrix(test_set$hypoxemia_90, as.ordered(y_pred), positive="hypoxemia")
+ModelMetrics::auc(test_set[, 49], as.ordered(y_pred)) # Area under the curve
+```
+
+The AUC is 0.7 --> better than raw logistic regression
+but sensitivity is 0.12 (low)
+
+#Decision tree classifications
+```{r}
+# 1-RPart Model -----------------------------------------------------------------------
+library(rpart)
+rpartMod <- rpart(hypoxemia_90 ~ ., data=training_set, 
+                  control=rpart.control(minsplit=5, cp=0, 
+                                        maxdepth = 4))
+rpartMod
+
+pred <- predict(rpartMod, test_set, type="class")
+head(pred)
+
+cm = table(test_set[,49], as.ordered(pred))
+cm
+caret::confusionMatrix(test_set[, 49], as.ordered(pred), positive="hypoxemia")
+ModelMetrics::auc(test_set[, 49], as.ordered(pred)) # Area under the curve
+
+```
+
+Although the AUC is low(0.52), Let's take a look at the classification tree
+
+```{r}
+library(rattle)
+library(RColorBrewer)
+fancyRpartPlot(rpartMod)  # rattle lib
+```
+
+Let us use the over sample dataset 
+
+```{r}
+rpartMod <- rpart(hypoxemia_90 ~ ., data=over$data, 
+                  control=rpart.control(minsplit=5, cp=0, 
+                                        maxdepth = 4))
+rpartMod
+
+pred <- predict(rpartMod, test_set, type="class")
+head(pred)
+
+cm = table(test_set[,49], as.ordered(pred))
+cm
+caret::confusionMatrix(test_set[, 49], as.ordered(pred), positive="hypoxemia")
+ModelMetrics::auc(test_set[, 49], as.ordered(pred))
+```
+Accuracy : 0.7023  but the AUC is very low (0.26),. 
+
+##Support Vector Machines
+
+```{r}
+classifier = svm(formula = hypoxemia_90 ~ .,   
+                 data = training_set,
+                 type = 'C-classification',
+                 kernel = 'polynomial')   # linear kernel --> linear svm --> linear classifier  --> more errors
+# Predicting the Test set results
+y_pred = predict(classifier, newdata = test_set[-49])
+head(y_pred)
+# Making the Confusion Matrix
+cm = table(test_set[,49], as.ordered(pred))
+cm
+caret::confusionMatrix(test_set[, 49], as.ordered(pred), positive="hypoxemia")
+ModelMetrics::auc(test_set[, 49], as.ordered(pred))
+```
+
+using sigmoid kernel ,The AUC=0.2614718 and kappa = 0.17
+using linear kernel ,The AUC=0.26 and sensitivity = 0.17
+using polynomial kernel ,The AUC=0.26 and sensitivity = 0.17
+
+Lets try using a oversamppled dataset
+
+```{r}
+classifier = svm(formula = hypoxemia_90 ~ .,   
+                 data = over$data,
+                 type = 'C-classification',
+                 kernel = 'polynomial')   
+# Predicting the Test set results
+y_pred = predict(classifier, newdata = test_set[-49])
+head(y_pred)
+# Making the Confusion Matrix
+cm = table(test_set[,49], as.ordered(pred))
+cm
+caret::confusionMatrix(test_set[, 49], as.ordered(pred), positive="hypoxemia")
+ModelMetrics::auc(test_set[, 49], as.ordered(pred))
+```
+the result is the same as normal data
+
+
+
+## Using Caret to build several classification models and model selection
+
+
